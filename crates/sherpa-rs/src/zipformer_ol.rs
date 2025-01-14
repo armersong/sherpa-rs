@@ -59,11 +59,11 @@ impl ZipFormerOnline {
         if recognizer.is_null() {
             bail!("Failed to create recognizer")
         }
-        let mut stream = None;
+        let mut my = Self { recognizer, stream: None };
         if config.long_decode {
-            stream = Some(ZipFormerStream::new(recognizer)?);
+            my.stream = Some(ZipFormerStream::new(recognizer)?);
         }
-        Ok(Self { recognizer, stream })
+        Ok(my)
     }
 
     pub fn decode(&mut self, sample_rate: u32, samples: Vec<f32>) -> Result<String> {
