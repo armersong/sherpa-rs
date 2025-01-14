@@ -81,6 +81,14 @@ impl ZipFormerOnline {
             stream.reset_decode(self.recognizer);
         }
     }
+
+    pub fn is_endpoint(&self) -> bool {
+        if let Some(ref mut stream) = self.stream {
+            stream.is_endpoint(self.recognizer)
+        } else {
+            true
+        }
+    }
 }
 
 unsafe impl Send for ZipFormerOnline {}
@@ -136,6 +144,9 @@ impl ZipFormerStream {
 
     pub fn reset_decode(&mut self, recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer) {
         unsafe { sherpa_rs_sys::SherpaOnnxOnlineStreamReset(recognizer, self.0) }
+    }
+    pub fn is_endpoint(&self, recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer) -> bool {
+        unsafe { sherpa_rs_sys::SherpaOnnxOnlineStreamIsEndpoint(recognizer, self.0) == 1 }
     }
 }
 
