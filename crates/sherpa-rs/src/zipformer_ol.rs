@@ -3,8 +3,8 @@ use crate::{
     utils::{cstr_to_string, RawCStr},
 };
 use eyre::{bail, Result};
-use std::mem;
-use tracing::info;
+use std::{mem, slice};
+use tracing::{debug, info};
 
 #[derive(Debug, Default)]
 pub struct ZipFormerOnlineConfig {
@@ -59,14 +59,17 @@ impl ZipFormerOnline {
         if recognizer.is_null() {
             bail!("Failed to create recognizer")
         }
-        let mut my = Self { recognizer, stream: None };
+        let mut my = Self {
+            recognizer,
+            stream: None,
+        };
         if config.long_decode {
             my.stream = Some(ZipFormerStream::new(recognizer)?);
         }
         Ok(my)
     }
 
-    pub fn decode(&mut self, sample_rate: u32, samples: Vec<f32>) -> Result<String> {
+    pub fn decode(&mut self, sample_rate: u32, samples: &[f32]) -> Result<ZipFormerResult> {
         match self.stream {
             Some(ref mut stream) => stream.decode(self.recognizer, sample_rate, samples),
             None => {
@@ -83,10 +86,16 @@ impl ZipFormerOnline {
     }
 
     pub fn is_endpoint(&self) -> bool {
-        if let Some(ref mut stream) = self.stream {
+        if let Some(ref stream) = self.stream {
             stream.is_endpoint(self.recognizer)
         } else {
             true
+        }
+    }
+
+    pub fn finish_input(&mut self) {
+        if let Some(ref mut stream) = self.stream {
+            stream.finish();
         }
     }
 }
@@ -118,8 +127,8 @@ impl ZipFormerStream {
         &mut self,
         recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer,
         sample_rate: u32,
-        samples: Vec<f32>,
-    ) -> Result<String> {
+        samples: &[f32],
+    ) -> Result<ZipFormerResult> {
         unsafe {
             sherpa_rs_sys::SherpaOnnxOnlineStreamAcceptWaveform(
                 self.0,
@@ -131,22 +140,34 @@ impl ZipFormerStream {
                 sherpa_rs_sys::SherpaOnnxDecodeOnlineStream(recognizer, self.0);
             }
             let result = sherpa_rs_sys::SherpaOnnxGetOnlineStreamResult(recognizer, self.0);
+            // let result = sherpa_rs_sys::SherpaOnnxGetOnlineStreamResultAsJson(recognizer, self.0);
 
             if result.is_null() {
                 bail!("get result failed");
             }
             let raw_result = result.read();
-            let text = cstr_to_string(raw_result.text);
+            debug!("result: {:?}", raw_result);
+            let res = raw_result.into();
             sherpa_rs_sys::SherpaOnnxDestroyOnlineRecognizerResult(result);
-            Ok(text)
+
+            // let text = cstr_to_string(result);
+            // sherpa_rs_sys::SherpaOnnxDestroyOnlineStreamResultJson(result);
+            // Ok(text)
+            Ok(res)
         }
     }
 
     pub fn reset_decode(&mut self, recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer) {
         unsafe { sherpa_rs_sys::SherpaOnnxOnlineStreamReset(recognizer, self.0) }
     }
-    pub fn is_endpoint(&self, recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer) -> bool {
+    pub fn is_endpoint(
+        &self,
+        recognizer: *const sherpa_rs_sys::SherpaOnnxOnlineRecognizer,
+    ) -> bool {
         unsafe { sherpa_rs_sys::SherpaOnnxOnlineStreamIsEndpoint(recognizer, self.0) == 1 }
+    }
+    pub fn finish(&mut self) {
+        unsafe { sherpa_rs_sys::SherpaOnnxOnlineStreamInputFinished(self.0) }
     }
 }
 
@@ -158,5 +179,54 @@ impl Drop for ZipFormerStream {
                 sherpa_rs_sys::SherpaOnnxDestroyOnlineStream(self.0);
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ZipFormerResult {
+    pub text: String,
+    pub tokens: Vec<String>,
+    pub timestamps: Vec<f32>,
+}
+
+impl From<sherpa_rs_sys::SherpaOnnxOnlineRecognizerResult> for ZipFormerResult {
+    fn from(value: sherpa_rs_sys::SherpaOnnxOnlineRecognizerResult) -> Self {
+        if value.count > 0 {
+            unsafe {
+                let timestamps = slice::from_raw_parts(value.timestamps, value.count as usize);
+                let c_tokens = slice::from_raw_parts(value.tokens_arr, value.count as usize);
+                let tokens: Vec<String> = c_tokens.iter().map(|v| cstr_to_string(*v)).collect();
+                Self {
+                    text: cstr_to_string(value.text),
+                    tokens,
+                    timestamps: Vec::from(timestamps),
+                }
+            }
+        } else {
+            Self {
+                text: "".to_string(),
+                tokens: vec![],
+                timestamps: vec![],
+            }
+        }
+    }
+}
+
+impl ZipFormerResult {
+    pub fn segments(&self, split_sec: f32) -> Vec<String> {
+        let mut last_index = 0;
+        let mut result = Vec::new();
+        for i in 1..self.timestamps.len() {
+            if self.timestamps[i] - self.timestamps[i - 1] >= split_sec {
+                let seg = (&self.tokens[last_index..i]).join("");
+                result.push(seg);
+                last_index = i;
+            }
+        }
+        if last_index != self.timestamps.len() - 1 {
+            let seg = (&self.tokens[last_index..self.timestamps.len()]).join("");
+            result.push(seg);
+        }
+        result
     }
 }

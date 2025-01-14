@@ -35,10 +35,42 @@ fn main() {
         // long_decode: true,
         ..Default::default()
     };
+    println!("sample rate {}, num {}", sample_rate, samples.len());
     let mut zipformer = ZipFormerOnline::new(config).unwrap();
+
+    // simulate stream
+    let sample = sample_rate as usize * 3;
+    let mut k = 0;
+    while k < samples.len() {
+        let start = k;
+        let end = if start + sample > samples.len() {
+            samples.len()
+        } else {
+            start + sample
+        };
+        k += sample;
+        println!("[{},{}]", start, end);
+        let result = zipformer.decode(sample_rate, &samples[start..end]).unwrap();
+        if result.text != "" {
+            println!(
+                "✅Text: {}, segments: {:?}",
+                result.text,
+                result.segments(0.5)
+            );
+        }
+        if zipformer.is_endpoint() {
+            zipformer.reset_decode();
+        }
+    }
+
     for i in 0..10 {
-        let text = zipformer.decode(sample_rate, samples.clone()).unwrap();
-        println!("✅{} Text: {}", i, text);
-        // zipformer.reset_decode();
+        let result = zipformer.decode(sample_rate, samples.as_slice()).unwrap();
+        println!(
+            "✅{} Text: {}, segments {:?}, origin data: {:?}",
+            i,
+            result.text,
+            result.segments(0.5),
+            result
+        );
     }
 }
