@@ -70,6 +70,10 @@ name = "zipformer"
 path = "../../examples/zipformer.rs"
 
 [[example]]
+name = "zipformer_ol"
+path = "../../examples/zipformer_ol.rs"
+
+[[example]]
 name = "diarize"
 path = "../../examples/diarize.rs"
 
